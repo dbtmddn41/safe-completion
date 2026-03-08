@@ -19,14 +19,21 @@ import warnings
 from typing import Any
 
 import torch
-from transformers import GPT2Model, GPT2PreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.gpt2.modeling_gpt2 import (
-    _CONFIG_FOR_DOC,
-    DEPARALLELIZE_DOCSTRING,
-    GPT2_INPUTS_DOCSTRING,
-    GPT2_START_DOCSTRING,
-    PARALLELIZE_DOCSTRING,
-)
+from transformers import GPT2Config, GPT2Model, GPT2PreTrainedModel, PretrainedConfig, PreTrainedModel
+try:
+    from transformers.models.gpt2.modeling_gpt2 import (
+        _CONFIG_FOR_DOC,
+        DEPARALLELIZE_DOCSTRING,
+        GPT2_INPUTS_DOCSTRING,
+        GPT2_START_DOCSTRING,
+        PARALLELIZE_DOCSTRING,
+    )
+except ImportError:
+    _CONFIG_FOR_DOC = GPT2Config
+    DEPARALLELIZE_DOCSTRING = ''
+    GPT2_INPUTS_DOCSTRING = ''
+    GPT2_START_DOCSTRING = ''
+    PARALLELIZE_DOCSTRING = ''
 from transformers.utils.doc import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,

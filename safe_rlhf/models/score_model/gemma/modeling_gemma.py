@@ -19,8 +19,12 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from transformers import GemmaModel, GemmaPreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.gemma.modeling_gemma import _CONFIG_FOR_DOC, GEMMA_INPUTS_DOCSTRING
+from transformers import GemmaConfig, GemmaModel, GemmaPreTrainedModel, PretrainedConfig, PreTrainedModel
+try:
+    from transformers.models.gemma.modeling_gemma import _CONFIG_FOR_DOC, GEMMA_INPUTS_DOCSTRING
+except ImportError:
+    _CONFIG_FOR_DOC = GemmaConfig
+    GEMMA_INPUTS_DOCSTRING = ''
 from transformers.utils.doc import add_start_docstrings_to_model_forward, replace_return_docstrings
 
 from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput
@@ -28,6 +32,7 @@ from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput
 
 class GemmaForScore(ScoreModelMixin, GemmaPreTrainedModel):
     def __init__(self, config: PretrainedConfig, **kwargs: Any) -> None:
+        config.tie_word_embeddings = False
         super().__init__(config)
         self.model = GemmaModel(config)
 

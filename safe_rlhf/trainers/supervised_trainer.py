@@ -181,8 +181,15 @@ class SupervisedTrainer(TrainerBase):
         """Train the model."""
         self.logger.print('***** Running training *****')
 
+        max_steps = getattr(self.args, 'max_steps', -1)
+        total_steps = (
+            max_steps
+            if max_steps > 0
+            else self.args.epochs * len(self.train_dataloader)
+        )
+
         progress_bar = tqdm(
-            total=self.args.epochs * len(self.train_dataloader),
+            total=total_steps,
             desc=f'Training 1/{self.args.epochs} epoch',
             position=0,
             leave=True,
@@ -193,6 +200,7 @@ class SupervisedTrainer(TrainerBase):
             self.logger.print('\n***** Evaluating at the beginning *****')
             self.logger.log(self.eval(), step=0)
 
+        reached_max_steps = False
         for epoch in range(self.args.epochs):
             self.model.train()
 
@@ -223,6 +231,13 @@ class SupervisedTrainer(TrainerBase):
                     self.logger.print(f'\n***** Evaluating at step {self.global_step} *****')
                     self.logger.log(self.eval(), step=self.global_step)
 
+                if max_steps > 0 and self.global_step >= max_steps:
+                    self.logger.print(
+                        f'\n***** Reached max_steps={max_steps}, stopping training *****',
+                    )
+                    reached_max_steps = True
+                    break
+
             if self.args.need_eval and self.args.eval_strategy == 'epoch':
                 self.logger.print(
                     f'\n***** Evaluating at epoch {epoch + 1}/{self.args.epochs} *****',
@@ -230,6 +245,9 @@ class SupervisedTrainer(TrainerBase):
                 self.logger.log(self.eval(), step=self.global_step)
 
             self.model.tput_timer.update_epoch_count()
+
+            if reached_max_steps:
+                break
 
     def set_train(self, mode: bool = True) -> None:
         """Set training mode for model."""

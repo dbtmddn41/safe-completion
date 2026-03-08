@@ -95,6 +95,15 @@ def parse_arguments() -> argparse.Namespace:
         help='Total number of training epochs to perform.',
     )
     training_parser.add_argument(
+        '--max_steps',
+        type=int,
+        default=-1,
+        help=(
+            'If set to a positive number, the total number of training steps to perform. '
+            'Overrides --epochs. Set to -1 to disable.'
+        ),
+    )
+    training_parser.add_argument(
         '--per_device_train_batch_size',
         type=int,
         default=16,
@@ -216,7 +225,22 @@ def parse_arguments() -> argparse.Namespace:
         '--eval_interval',
         type=int,
         default=1000000,
-        help='The interval to evaluate the model.',
+        help='The interval (in steps) to evaluate the model.',
+    )
+    evaluation_parser.add_argument(
+        '--eval_steps',
+        type=int,
+        default=None,
+        help='Alias for --eval_interval. If set, overrides --eval_interval.',
+    )
+    evaluation_parser.add_argument(
+        '--max_eval_steps',
+        type=int,
+        default=-1,
+        help=(
+            'If set to a positive number, limit the number of batches in each evaluation run. '
+            'Set to -1 to evaluate on the full dataset.'
+        ),
     )
     evaluation_parser.add_argument(
         '--need_eval',
@@ -318,6 +342,10 @@ def parse_arguments() -> argparse.Namespace:
 def main() -> None:
     """Main training routine."""
     args = parse_arguments()
+
+    # Resolve --eval_steps alias
+    if args.eval_steps is not None:
+        args.eval_interval = args.eval_steps
 
     deepspeed.init_distributed()
 

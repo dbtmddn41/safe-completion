@@ -14,23 +14,47 @@
 # ==============================================================================
 """Safe-RLHF: Safe Reinforcement Learning with Human Feedback."""
 
-from safe_rlhf import algorithms, configs, datasets, models, trainers, utils, values
-from safe_rlhf.algorithms import *  # noqa: F403
-from safe_rlhf.configs import *  # noqa: F403
-from safe_rlhf.datasets import *  # noqa: F403
-from safe_rlhf.models import *  # noqa: F403
-from safe_rlhf.trainers import *  # noqa: F403
-from safe_rlhf.utils import *  # noqa: F403
-from safe_rlhf.values import *  # noqa: F403
+from __future__ import annotations
+
+import importlib
+from typing import Any
+
 from safe_rlhf.version import __version__
 
 
-__all__ = [
-    *algorithms.__all__,
-    *configs.__all__,
-    *datasets.__all__,
-    *models.__all__,
-    *trainers.__all__,
-    *values.__all__,
-    *utils.__all__,
-]
+_SUBMODULES = (
+    'algorithms',
+    'configs',
+    'datasets',
+    'models',
+    'trainers',
+    'utils',
+    'values',
+)
+
+__all__ = ['__version__', *_SUBMODULES]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily import top-level subpackages and exported symbols.
+
+    This avoids importing heavy training dependencies such as DeepSpeed when a
+    lightweight utility module (for example `safe_rlhf.datagen`) is executed.
+    """
+    if name in _SUBMODULES:
+        module = importlib.import_module(f'safe_rlhf.{name}')
+        globals()[name] = module
+        return module
+
+    for module_name in _SUBMODULES:
+        module = importlib.import_module(f'safe_rlhf.{module_name}')
+        if hasattr(module, name):
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

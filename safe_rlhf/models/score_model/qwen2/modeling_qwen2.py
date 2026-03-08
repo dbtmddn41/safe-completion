@@ -19,8 +19,18 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from transformers import PretrainedConfig, PreTrainedModel, Qwen2Model, Qwen2PreTrainedModel
-from transformers.models.qwen2.modeling_qwen2 import _CONFIG_FOR_DOC, QWEN2_INPUTS_DOCSTRING
+from transformers import (
+    PretrainedConfig,
+    PreTrainedModel,
+    Qwen2Config,
+    Qwen2Model,
+    Qwen2PreTrainedModel,
+)
+try:
+    from transformers.models.qwen2.modeling_qwen2 import _CONFIG_FOR_DOC, QWEN2_INPUTS_DOCSTRING
+except ImportError:
+    _CONFIG_FOR_DOC = Qwen2Config
+    QWEN2_INPUTS_DOCSTRING = ''
 from transformers.utils.doc import add_start_docstrings_to_model_forward, replace_return_docstrings
 
 from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput
@@ -28,6 +38,7 @@ from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput
 
 class Qwen2ForScore(ScoreModelMixin, Qwen2PreTrainedModel):
     def __init__(self, config: PretrainedConfig, **kwargs: Any) -> None:
+        config.tie_word_embeddings = False
         super().__init__(config)
         self.model = Qwen2Model(config)
 

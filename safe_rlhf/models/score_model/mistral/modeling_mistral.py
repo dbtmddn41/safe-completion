@@ -19,8 +19,18 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from transformers import MistralModel, MistralPreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.mistral.modeling_mistral import _CONFIG_FOR_DOC, MISTRAL_INPUTS_DOCSTRING
+from transformers import (
+    MistralConfig,
+    MistralModel,
+    MistralPreTrainedModel,
+    PretrainedConfig,
+    PreTrainedModel,
+)
+try:
+    from transformers.models.mistral.modeling_mistral import _CONFIG_FOR_DOC, MISTRAL_INPUTS_DOCSTRING
+except ImportError:
+    _CONFIG_FOR_DOC = MistralConfig
+    MISTRAL_INPUTS_DOCSTRING = ''
 from transformers.utils.doc import add_start_docstrings_to_model_forward, replace_return_docstrings
 
 from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput
@@ -28,6 +38,7 @@ from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput
 
 class MistralForScore(ScoreModelMixin, MistralPreTrainedModel):
     def __init__(self, config: PretrainedConfig, **kwargs: Any) -> None:
+        config.tie_word_embeddings = False
         super().__init__(config)
         self.model = MistralModel(config)
 

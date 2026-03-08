@@ -19,8 +19,12 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from transformers import PhiModel, PhiPreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.phi.modeling_phi import _CONFIG_FOR_DOC, PHI_INPUTS_DOCSTRING
+from transformers import PhiConfig, PhiModel, PhiPreTrainedModel, PretrainedConfig, PreTrainedModel
+try:
+    from transformers.models.phi.modeling_phi import _CONFIG_FOR_DOC, PHI_INPUTS_DOCSTRING
+except ImportError:
+    _CONFIG_FOR_DOC = PhiConfig
+    PHI_INPUTS_DOCSTRING = ''
 from transformers.utils.doc import add_start_docstrings_to_model_forward, replace_return_docstrings
 
 from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput

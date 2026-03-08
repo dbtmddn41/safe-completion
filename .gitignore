@@ -64,6 +64,10 @@ cover/
 *.mo
 *.pot
 
+*.log
+*.err
+*.out
+
 # Django stuff:
 *.log
 local_settings.py
@@ -419,3 +423,10 @@ Sessionx.vim
 tags
 # Persistent undo
 [._]*.un~
+
+
+# tar file
+*.tar.gz
+*/*.tar.gz
+
+outputs/

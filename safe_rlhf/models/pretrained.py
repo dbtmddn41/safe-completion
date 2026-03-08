@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import warnings
 from typing import Any, Callable, Literal
@@ -24,6 +25,7 @@ import deepspeed
 import torch
 import torch.nn as nn
 from transformers import (
+    AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
     PreTrainedModel,
@@ -39,6 +41,31 @@ from safe_rlhf.configs import (
 )
 from safe_rlhf.models.score_model import AutoModelForScore
 from safe_rlhf.utils import is_main_process
+
+
+@contextlib.contextmanager
+def suppress_tie_weights_mapping_warning() -> Any:
+    """Suppress noisy tie-weights mapping warnings from Transformers model loading."""
+    message_prefix = 'The tied weights mapping and config for this model specifies to tie '
+
+    class _TieWeightsFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            message = record.getMessage()
+            return not message.startswith(message_prefix)
+
+    tie_filter = _TieWeightsFilter()
+    transformers_logger = logging.getLogger('transformers.modeling_utils')
+    transformers_logger.addFilter(tie_filter)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            'ignore',
+            message=r'^The tied weights mapping and config for this model specifies to tie .*',
+        )
+        try:
+            yield
+        finally:
+            transformers_logger.removeFilter(tie_filter)
 
 
 # Reference: https://github.com/tatsu-lab/stanford_alpaca/blob/main/train.py
@@ -186,15 +213,43 @@ def load_pretrained_models(  # pylint: disable=too-many-arguments
     if auto_tokenizer_kwargs is None:
         auto_tokenizer_kwargs = {}
 
-    model = auto_model_type.from_pretrained(
-        model_name_or_path,
-        *auto_model_args,
-        cache_dir=cache_dir,
-        device_map=device_map,
-        torch_dtype=dtype,
-        trust_remote_code=trust_remote_code,
-        **auto_model_kwargs,
-    )
+    if 'config' not in auto_model_kwargs:
+        model_config = AutoConfig.from_pretrained(
+            model_name_or_path,
+            cache_dir=cache_dir,
+            trust_remote_code=trust_remote_code,
+        )
+
+        is_score_model = auto_model_type is AutoModelForScore or (
+            isinstance(auto_model_type, type) and issubclass(auto_model_type, AutoModelForScore)
+        )
+        if is_score_model:
+            score_config_keys = (
+                'score_dim',
+                'score_bias',
+                'score_type',
+                'do_normalize',
+                'normalizer_type',
+                'momentum',
+            )
+            for key in score_config_keys:
+                if key in auto_model_kwargs:
+                    setattr(model_config, key, auto_model_kwargs[key])
+
+        if hasattr(model_config, 'tie_word_embeddings'):
+            model_config.tie_word_embeddings = False
+        auto_model_kwargs['config'] = model_config
+
+    with suppress_tie_weights_mapping_warning():
+        model = auto_model_type.from_pretrained(
+            model_name_or_path,
+            *auto_model_args,
+            cache_dir=cache_dir,
+            device_map=device_map,
+            torch_dtype=dtype,
+            trust_remote_code=trust_remote_code,
+            **auto_model_kwargs,
+        )
     tokenizer = AutoTokenizer.from_pretrained(
         model_name_or_path,
         *auto_tokenizer_args,

@@ -18,12 +18,17 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from transformers import GPTNeoModel, GPTNeoPreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.gpt_neo.modeling_gpt_neo import (
-    _CONFIG_FOR_DOC,
-    GPT_NEO_INPUTS_DOCSTRING,
-    GPT_NEO_START_DOCSTRING,
-)
+from transformers import GPTNeoConfig, GPTNeoModel, GPTNeoPreTrainedModel, PretrainedConfig, PreTrainedModel
+try:
+    from transformers.models.gpt_neo.modeling_gpt_neo import (
+        _CONFIG_FOR_DOC,
+        GPT_NEO_INPUTS_DOCSTRING,
+        GPT_NEO_START_DOCSTRING,
+    )
+except ImportError:
+    _CONFIG_FOR_DOC = GPTNeoConfig
+    GPT_NEO_INPUTS_DOCSTRING = ''
+    GPT_NEO_START_DOCSTRING = ''
 from transformers.utils.doc import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,

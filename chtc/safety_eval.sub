@@ -1,0 +1,90 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# CHTC HTCondor Submit File: Safety Evaluation
+#
+# LLM 모델의 안전성 평가:
+#   - AdvBench (또는 커스텀 벤치마크) 프롬프트로 응답 생성
+#   - Llama-Guard로 안전/위험 분류
+#   - HuggingFace built-in method로 perplexity 측정
+#   - Qualitative 리포트 생성
+#
+# 사용법:
+#   condor_submit chtc/safety_eval.sub
+#
+# 사전 준비:
+#   1. chmod +x chtc/run_safety_eval.sh
+#   2. mkdir -p outputs/logs/safety_eval
+#   3. (선택) HF_TOKEN 환경변수 설정 (Llama-Guard 등 gated 모델용)
+#   4. (선택) 대형 모델은 미리 다운로드하여 transfer_input_files에 추가
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ─── Universe & Container ─────────────────────────────────────────────────────
+universe                = docker
+docker_image            = pytorch/pytorch:2.3.1-cuda12.1-cudnn8-devel
+
+# ─── Executable & Arguments ───────────────────────────────────────────────────
+executable              = chtc/run_safety_eval.sh
+arguments               = ppo_lag_output_5729682_0.tar.gz meta-llama/Llama-Guard-3-1B advbench 100 output/safety_eval
+# arguments 설명:
+#   $1 = model_name_or_path      (평가 대상 모델)
+#   $2 = guard_model              (Llama-Guard 모델)
+#   $3 = benchmark                (advbench / HF 데이터셋 / 로컬 파일)
+#   $4 = num_samples              (평가할 프롬프트 수, 0 = 전체)
+#   $5 = output_dir               (출력 디렉토리)
+
+# ─── File Transfer ────────────────────────────────────────────────────────────
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+
+transfer_input_files    = safe_rlhf, \
+                          scripts, \
+                          outputs/ppo-models/ppo_lag_output_5729682_0.tar.gz, \
+                          requirements.txt, \
+                          pyproject.toml, \
+                          setup.py, \
+                          Makefile
+# 대형 모델을 로컬에 미리 받아둔 경우:
+#                         model.tar.gz, \
+#                         guard_model.tar.gz
+# Staging에서 환경/모델 가져오기:
+#                         /staging/slyu59/env.tar.gz, \
+#                         /staging/slyu59/models/model.tar.gz, \
+#                         /staging/slyu59/models/guard_model.tar.gz
+
+# 결과 아카이브는 실행 디렉토리(root)에 생성됩니다.
+transfer_output_files   = safety_eval_output_$(Cluster)_$(Process).tar.gz
+
+# 안정성 우선: file:// remap은 실행 노드/submit 노드 권한 문제로 실패할 수 있어 비활성화
+# 필요 시 잡 완료 후 로컬에서 수동 이동:
+#   mv safety_eval_output_$(Cluster)_$(Process).tar.gz outputs/eval-results/
+
+# ─── Resource Requests ────────────────────────────────────────────────────────
+# Safety eval은 순차적으로 모델을 로드/언로드하므로 GPU 1개면 충분합니다.
+# Llama-Guard-3-1B (~2GB) + Target model 에 맞춰 GPU 메모리 요구를 설정하세요.
+request_cpus            = 4
+request_memory          = 32GB
+request_disk            = 80GB
+request_gpus            = 1
+
+# ─── GPU Requirements ────────────────────────────────────────────────────────
++WantGPULab             = true
++GPUJobLength           = "medium"
+# GPUJobLength: "short" (<12h), "medium" (<24h), "long" (<7days)
+
+# 모델 크기에 따라 조정하세요:
+#   - 1B~3B 모델: 16GB+
+#   - 7B 모델: 24GB+ (또는 40GB+ for bf16)
+#   - 13B+ 모델: 80GB+
+require_gpus            = (GlobalMemoryMb >= 16000) && (Capability >= 7.0)
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+log                     = outputs/logs/safety_eval/$(Cluster)/$(Process).log
+error                   = outputs/logs/safety_eval/$(Cluster)/$(Process).err
+output                  = outputs/logs/safety_eval/$(Cluster)/$(Process).out
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
++is_resumable           = true
+max_retries             = 3
+
+environment             = "WANDB_MODE=offline HF_HOME=./hf_cache HF_DATASETS_CACHE=./hf_cache/datasets TRANSFORMERS_CACHE=./hf_cache/transformers TORCH_EXTENSIONS_DIR=./hf_cache/torch_extensions XDG_CACHE_HOME=./hf_cache HF_TOKEN=$ENV(HF_TOKEN) HUGGINGFACE_HUB_TOKEN=$ENV(HUGGINGFACE_HUB_TOKEN) TRANSFORMERS_VERBOSITY=error JOB_SUFFIX=$(Cluster)_$(Process)"
+
+queue 1

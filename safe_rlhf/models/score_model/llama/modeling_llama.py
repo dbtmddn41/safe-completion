@@ -19,15 +19,22 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from transformers import LlamaModel, LlamaPreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.llama.modeling_llama import _CONFIG_FOR_DOC, LLAMA_INPUTS_DOCSTRING
+from transformers import LlamaConfig, LlamaModel, LlamaPreTrainedModel, PretrainedConfig, PreTrainedModel
+try:
+    from transformers.models.llama.modeling_llama import _CONFIG_FOR_DOC, LLAMA_INPUTS_DOCSTRING
+except ImportError:
+    _CONFIG_FOR_DOC = LlamaConfig
+    LLAMA_INPUTS_DOCSTRING = ''
 from transformers.utils.doc import add_start_docstrings_to_model_forward, replace_return_docstrings
 
 from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput
 
 
 class LlamaForScore(ScoreModelMixin, LlamaPreTrainedModel):
+    _tied_weights_keys = []
+
     def __init__(self, config: PretrainedConfig, **kwargs: Any) -> None:
+        config.tie_word_embeddings = False
         super().__init__(config)
         self.model = LlamaModel(config)
 
@@ -51,6 +58,10 @@ class LlamaForScore(ScoreModelMixin, LlamaPreTrainedModel):
 
     def get_decoder(self) -> PreTrainedModel:
         return self.model
+
+    def tie_weights(self, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        self.config.tie_word_embeddings = False
 
     @add_start_docstrings_to_model_forward(LLAMA_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=ScoreModelOutput, config_class=_CONFIG_FOR_DOC)

@@ -19,8 +19,12 @@ import warnings
 from typing import Any
 
 import torch
-from transformers import BloomModel, BloomPreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.bloom.modeling_bloom import _CONFIG_FOR_DOC, BLOOM_INPUTS_DOCSTRING
+from transformers import BloomConfig, BloomModel, BloomPreTrainedModel, PretrainedConfig, PreTrainedModel
+try:
+    from transformers.models.bloom.modeling_bloom import _CONFIG_FOR_DOC, BLOOM_INPUTS_DOCSTRING
+except ImportError:
+    _CONFIG_FOR_DOC = BloomConfig
+    BLOOM_INPUTS_DOCSTRING = ''
 from transformers.utils.doc import add_start_docstrings_to_model_forward, replace_return_docstrings
 
 from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput

@@ -15,11 +15,15 @@
 """The main training script to supervised finetune a model using Hugging Face Transformers Trainer."""
 
 import argparse
+import inspect
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
 
 import transformers
-from transformers.training_args import OptimizerNames
+try:
+    from transformers import OptimizerNames
+except ImportError:
+    from transformers.training_args import OptimizerNames
 
 from safe_rlhf.datasets import SupervisedDataset, parse_dataset
 from safe_rlhf.models import load_pretrained_models
@@ -87,13 +91,19 @@ def main() -> None:
     )
     data_collator = train_dataset.get_collator()
 
-    trainer = transformers.Trainer(
-        model=model,
-        tokenizer=tokenizer,
-        args=training_args,
-        train_dataset=train_dataset,
-        data_collator=data_collator,
-    )
+    trainer_kwargs = {
+        'model': model,
+        'args': training_args,
+        'train_dataset': train_dataset,
+        'data_collator': data_collator,
+    }
+    trainer_signature = inspect.signature(transformers.Trainer.__init__).parameters
+    if 'processing_class' in trainer_signature:
+        trainer_kwargs['processing_class'] = tokenizer
+    else:
+        trainer_kwargs['tokenizer'] = tokenizer
+
+    trainer = transformers.Trainer(**trainer_kwargs)
     trainer.train()
     trainer.save_state()
     trainer.save_model()

@@ -18,11 +18,15 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from transformers import GPTNeoXModel, GPTNeoXPreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.gpt_neox.modeling_gpt_neox import (
-    _CONFIG_FOR_DOC,
-    GPT_NEOX_INPUTS_DOCSTRING,
-)
+from transformers import GPTNeoXConfig, GPTNeoXModel, GPTNeoXPreTrainedModel, PretrainedConfig, PreTrainedModel
+try:
+    from transformers.models.gpt_neox.modeling_gpt_neox import (
+        _CONFIG_FOR_DOC,
+        GPT_NEOX_INPUTS_DOCSTRING,
+    )
+except ImportError:
+    _CONFIG_FOR_DOC = GPTNeoXConfig
+    GPT_NEOX_INPUTS_DOCSTRING = ''
 from transformers.utils.doc import add_start_docstrings_to_model_forward, replace_return_docstrings
 
 from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput

@@ -67,7 +67,10 @@ class RewardTrainer(SupervisedTrainer):
 
         rewards = []
         batch = None
-        for batch in eval_dataloader:
+        max_eval_steps = getattr(self.args, 'max_eval_steps', -1)
+        for eval_step, batch in enumerate(eval_dataloader):
+            if max_eval_steps > 0 and eval_step >= max_eval_steps:
+                break
             batch = to_device(batch, self.args.device)
             batch_size = batch['better_input_ids'].size(0)
             higher_end_rewards = self.model(

@@ -115,9 +115,9 @@ deepspeed "${DEEPSPEED_ARGS[@]}" \
 	--max_length 512 \
 	--trust_remote_code True \
 	--loss_type sequence-wise \
-	--epochs 2 \
-	--per_device_train_batch_size 16 \
-	--per_device_eval_batch_size 16 \
+	--epochs 1 \
+	--per_device_train_batch_size 1 \
+	--per_device_eval_batch_size 1 \
 	--gradient_accumulation_steps 1 \
 	--gradient_checkpointing \
 	--regularization 0.001 \
@@ -130,10 +130,13 @@ deepspeed "${DEEPSPEED_ARGS[@]}" \
 	--weight_decay 0.1 \
 	--seed 42 \
 	--need_eval \
-	--eval_strategy epoch \
+	--eval_strategy steps \
+	--eval_steps 1 \
+	--max_steps 1 \
+	--max_eval_steps 1 \
 	--output_dir "${OUTPUT_DIR}" \
 	--log_type wandb \
-	--log_project Safe-RLHF-RM \
+	--log_project Safe-RLHF-RM-TEST \
 	--zero_stage "${ZERO_STAGE}" \
 	--offload "${OFFLOAD}" \
 	--bf16 True \

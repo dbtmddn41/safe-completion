@@ -19,8 +19,12 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from transformers import OPTModel, OPTPreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.opt.modeling_opt import _CONFIG_FOR_DOC, OPT_INPUTS_DOCSTRING
+from transformers import OPTConfig, OPTModel, OPTPreTrainedModel, PretrainedConfig, PreTrainedModel
+try:
+    from transformers.models.opt.modeling_opt import _CONFIG_FOR_DOC, OPT_INPUTS_DOCSTRING
+except ImportError:
+    _CONFIG_FOR_DOC = OPTConfig
+    OPT_INPUTS_DOCSTRING = ''
 from transformers.utils.doc import add_start_docstrings_to_model_forward, replace_return_docstrings
 
 from safe_rlhf.models.score_model import ScoreModelMixin, ScoreModelOutput

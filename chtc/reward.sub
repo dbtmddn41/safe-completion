@@ -1,0 +1,53 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# CHTC HTCondor Submit File: Safe-RLHF Reward Model Training
+#
+# 사용법:
+#   condor_submit chtc/reward.sub
+# ──────────────────────────────────────────────────────────────────────────────
+
+universe                = docker
+docker_image            = pytorch/pytorch:2.3.1-cuda12.1-cudnn8-devel
+# docker_image          = <your_dockerhub_user>/safe-rlhf:latest
+
+executable              = chtc/run_reward.sh
+arguments               = meta-llama/Llama-3.2-1B output/rm 3 none $(Cluster)_$(Process)
+# arguments:
+#   $1 = model_name_or_path
+#   $2 = output_dir
+#   $3 = zero_stage
+#   $4 = offload
+#   $5 = job_suffix (optional)
+
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+
+transfer_input_files    = safe_rlhf, \
+                          scripts, \
+                          requirements.txt, \
+                          pyproject.toml, \
+                          setup.py, \
+                          Makefile
+#                         /staging/slyu59/env.tar.gz, \
+#                         /staging/slyu59/models/alpaca-7b.tar.gz
+
+# 결과물은 submit 디렉토리(현재 repo root)로 안전하게 회수
+transfer_output_files   = artifacts/rm_output_$(Cluster)_$(Process).tar.gz
+
+request_cpus            = 8
+request_memory          = 64GB
+request_disk            = 100GB
+request_gpus            = 1
+
++WantGPULab             = true
++GPUJobLength           = "long"
+require_gpus            = (GlobalMemoryMb >= 40000) && (Capability >= 8.0)
+
+log                     = outputs/logs/reward/$(Cluster)/$(Process).log
+error                   = outputs/logs/reward/$(Cluster)/$(Process).err
+output                  = outputs/logs/reward/$(Cluster)/$(Process).out
+
+environment             = "WANDB_MODE=offline HF_HOME=./hf_cache HF_DATASETS_CACHE=./hf_cache/datasets TRANSFORMERS_CACHE=./hf_cache/transformers HF_TOKEN=$ENV(HF_TOKEN) HUGGINGFACE_HUB_TOKEN=$ENV(HUGGINGFACE_HUB_TOKEN)"
++is_resumable           = true
+max_retries             = 3
+
+queue 1

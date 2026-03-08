@@ -1,0 +1,83 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# CHTC HTCondor Submit File: Data Generation Pipeline (Prompt -> Answer + CoT)
+#
+# Usage:
+#   condor_submit chtc/datagen.sub
+#
+# Prerequisites:
+#   1. chmod +x chtc/run_datagen.sh
+#   2. mkdir -p outputs/logs/datagen
+#   3. Prepare input data (input.jsonl) under the data/ directory
+#   4. (Optional) Pre-download large model artifacts and add them to transfer_input_files
+#
+# Arguments:
+#   $1 = model            : Generation LLM (HuggingFace model name or local path)
+#   $2 = input_file       : Prompt (JSONL) file path
+#   $3 = output_dir       : Output directory
+#   $4 = prompt_field     : Prompt field name
+#   $5 = job_suffix       : Output archive suffix
+#   $6 = backend          : transformers or vllm
+#   $7 = tp_size          : vLLM tensor parallel size
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ─── Universe & Container ─────────────────────────────────────────────────────
+universe                = docker
+docker_image            = pytorch/pytorch:2.3.1-cuda12.1-cudnn8-devel
+
+# ─── Executable & Arguments ───────────────────────────────────────────────────
+executable              = chtc/run_datagen.sh
+arguments               = meta-llama/Llama-3.2-3B-Instruct data/datagen_v32_sample.jsonl output/datagen-llama3-3b input $(Cluster)_$(Process) vllm 1
+# ┌────────────────────────────────────────────────────────────────────────┐
+# │ Example argument combinations:                                          │
+# │                                                                        │
+# │ Basic:                                                                  │
+# │   arguments = <model> input.jsonl output/datagen input $(Cluster)_$(Process) transformers 1 │
+# │                                                                        │
+# │ If the prompt field is not input:                                      │
+# │   arguments = ... input.jsonl output/datagen question ...               │
+# │                                                                        │
+# │ Using vLLM:                                                             │
+# │   arguments = ... input.jsonl output/datagen input ... vllm 1           │
+# └────────────────────────────────────────────────────────────────────────┘
+
+# ─── File Transfer ────────────────────────────────────────────────────────────
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+
+transfer_input_files    = safe_rlhf, \
+                          scripts, \
+                          data, \
+                          requirements.txt, \
+                          pyproject.toml, \
+                          setup.py, \
+                          Makefile
+# If a large model is pre-downloaded locally:
+# Single model example:
+#                         model.tar.gz
+
+transfer_output_files   = datagen_output_$(Cluster)_$(Process).tar.gz
+
+# ─── Resource Requests ────────────────────────────────────────────────────────
+request_cpus            = 4
+request_memory          = 48GB
+request_disk            = 60GB
+request_gpus            = 1
+
+# ─── GPU Requirements ────────────────────────────────────────────────────────
++WantGPULab             = true
++GPUJobLength           = "long"
+
+require_gpus            = (GlobalMemoryMb >= 22000) && (Capability >= 7.0)
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+log                     = outputs/logs/datagen/$(Cluster)/$(Process).log
+error                   = outputs/logs/datagen/$(Cluster)/$(Process).err
+output                  = outputs/logs/datagen/$(Cluster)/$(Process).out
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
++is_resumable           = true
+max_retries             = 3
+
+environment             = "WANDB_MODE=offline HF_HOME=./hf_cache HF_DATASETS_CACHE=./hf_cache/datasets TRANSFORMERS_CACHE=./hf_cache/transformers TORCH_EXTENSIONS_DIR=./hf_cache/torch_extensions XDG_CACHE_HOME=./hf_cache HF_TOKEN=$ENV(HF_TOKEN) HUGGINGFACE_HUB_TOKEN=$ENV(HUGGINGFACE_HUB_TOKEN)"
+
+queue 1

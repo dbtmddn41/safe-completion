@@ -1,0 +1,53 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# CHTC HTCondor Submit File: Safe-RLHF PPO-Lag Smoke Test
+#
+# 목적: 파이프라인 동작 여부를 빠르게 확인 (약 2~5 training step만 실행)
+# 사용법:
+#   condor_submit chtc/ppo_smoke_test.sub
+#
+# TRAIN_PROPORTION=0.0001 → PKU-SafeRLHF/train ~72k 행의 0.01% ≈ 7개 샘플
+#   → per_device_prompt_batch_size=2 기준 약 4 step (30~60초 훈련)
+# ──────────────────────────────────────────────────────────────────────────────
+
+universe                = docker
+docker_image            = pytorch/pytorch:2.3.1-cuda12.1-cudnn8-devel
+
+executable              = chtc/run_ppo.sh
+arguments               = meta-llama/Llama-3.2-1B output/rm output/cm output/ppo-smoke 3 none
+
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+
+transfer_input_files    = safe_rlhf, \
+                          scripts, \
+                          requirements.txt, \
+                          pyproject.toml, \
+                          setup.py, \
+                          Makefile, \
+                          file:///staging/slyu59/models/reward-models/rm_output_5719530_0.tar.gz, \
+                          file:///staging/slyu59/models/cost-models/cm_output_5719457_0.tar.gz
+
+transfer_output_files   = artifacts/ppo_lag_output_$(Cluster)_$(Process).tar.gz
+
+transfer_output_remaps = "artifacts/ppo_lag_output_$(Cluster)_$(Process).tar.gz = file:///staging/slyu59/models/ppo-models/ppo_smoke_output_$(Cluster)_$(Process).tar.gz"
+
+request_cpus            = 8
+request_memory          = 192GB
+request_disk            = 100GB
+request_gpus            = 2
+
++WantGPULab             = true
++GPUJobLength           = "short"
+require_gpus            = (GlobalMemoryMb >= 80000) && (Capability >= 8.0)
+
+log                     = outputs/logs/ppo/$(Cluster)/$(Process).log
+error                   = outputs/logs/ppo/$(Cluster)/$(Process).err
+output                  = outputs/logs/ppo/$(Cluster)/$(Process).out
+
+# TRAIN_PROPORTION=0.0001: ~7 샘플 → ~4 training step
+# PTX_PROPORTION=0.001:   alpaca ~52 샘플 (PTX loss 계산용)
+environment             = "WANDB_MODE=offline HF_HOME=./hf_cache HF_DATASETS_CACHE=./hf_cache/datasets TRANSFORMERS_CACHE=./hf_cache/transformers TORCH_EXTENSIONS_DIR=./hf_cache/torch_extensions XDG_CACHE_HOME=./hf_cache HF_TOKEN=$ENV(HF_TOKEN) HUGGINGFACE_HUB_TOKEN=$ENV(HUGGINGFACE_HUB_TOKEN) TRANSFORMERS_VERBOSITY=error JOB_SUFFIX=$(Cluster)_$(Process) TRAIN_PROPORTION=0.0001 PTX_PROPORTION=0.001"
++is_resumable           = false
+max_retries             = 1
+
+queue 1

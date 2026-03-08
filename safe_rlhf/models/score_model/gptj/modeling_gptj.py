@@ -19,14 +19,21 @@ import warnings
 from typing import Any
 
 import torch
-from transformers import GPTJModel, GPTJPreTrainedModel, PretrainedConfig, PreTrainedModel
-from transformers.models.gptj.modeling_gptj import (
-    _CONFIG_FOR_DOC,
-    DEPARALLELIZE_DOCSTRING,
-    GPTJ_INPUTS_DOCSTRING,
-    GPTJ_START_DOCSTRING,
-    PARALLELIZE_DOCSTRING,
-)
+from transformers import GPTJConfig, GPTJModel, GPTJPreTrainedModel, PretrainedConfig, PreTrainedModel
+try:
+    from transformers.models.gptj.modeling_gptj import (
+        _CONFIG_FOR_DOC,
+        DEPARALLELIZE_DOCSTRING,
+        GPTJ_INPUTS_DOCSTRING,
+        GPTJ_START_DOCSTRING,
+        PARALLELIZE_DOCSTRING,
+    )
+except ImportError:
+    _CONFIG_FOR_DOC = GPTJConfig
+    DEPARALLELIZE_DOCSTRING = ''
+    GPTJ_INPUTS_DOCSTRING = ''
+    GPTJ_START_DOCSTRING = ''
+    PARALLELIZE_DOCSTRING = ''
 from transformers.utils.doc import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
