@@ -5,6 +5,8 @@
 #   - AdvBench (또는 커스텀 벤치마크) 프롬프트로 응답 생성
 #   - Llama-Guard로 안전/위험 분류
 #   - HuggingFace built-in method로 perplexity 측정
+#   - Alpaca 데이터셋 기반 ROUGE 측정
+#   - MMLU 정확도 측정
 #   - Qualitative 리포트 생성
 #
 # 사용법:
@@ -23,7 +25,7 @@ docker_image            = pytorch/pytorch:2.3.1-cuda12.1-cudnn8-devel
 
 # ─── Executable & Arguments ───────────────────────────────────────────────────
 executable              = chtc/run_safety_eval.sh
-arguments               = ppo_lag_output_5729682_0.tar.gz meta-llama/Llama-Guard-3-1B advbench 100 output/safety_eval
+arguments               = $(MODEL_NAME_OR_PATH) meta-llama/Llama-Guard-3-1B advbench 100 output/safety_eval
 # arguments 설명:
 #   $1 = model_name_or_path      (평가 대상 모델)
 #   $2 = guard_model              (Llama-Guard 모델)
@@ -37,7 +39,6 @@ when_to_transfer_output = ON_EXIT
 
 transfer_input_files    = safe_rlhf, \
                           scripts, \
-                          outputs/ppo-models/ppo_lag_output_5729682_0.tar.gz, \
                           requirements.txt, \
                           pyproject.toml, \
                           setup.py, \
@@ -59,22 +60,22 @@ transfer_output_files   = safety_eval_output_$(Cluster)_$(Process).tar.gz
 
 # ─── Resource Requests ────────────────────────────────────────────────────────
 # Safety eval은 순차적으로 모델을 로드/언로드하므로 GPU 1개면 충분합니다.
-# Llama-Guard-3-1B (~2GB) + Target model 에 맞춰 GPU 메모리 요구를 설정하세요.
+# Llama-3.2-1B + Llama-Guard-3-1B 기준의 기본 리소스 설정입니다.
 request_cpus            = 4
-request_memory          = 32GB
-request_disk            = 80GB
+request_memory          = 24GB
+request_disk            = 60GB
 request_gpus            = 1
 
 # ─── GPU Requirements ────────────────────────────────────────────────────────
 +WantGPULab             = true
-+GPUJobLength           = "medium"
++GPUJobLength           = "short"
 # GPUJobLength: "short" (<12h), "medium" (<24h), "long" (<7days)
 
 # 모델 크기에 따라 조정하세요:
-#   - 1B~3B 모델: 16GB+
+#   - 1B~3B 모델: 12GB+ (여유분 포함)
 #   - 7B 모델: 24GB+ (또는 40GB+ for bf16)
 #   - 13B+ 모델: 80GB+
-require_gpus            = (GlobalMemoryMb >= 16000) && (Capability >= 7.0)
+require_gpus            = (GlobalMemoryMb >= 12000) && (Capability >= 7.0)
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 log                     = outputs/logs/safety_eval/$(Cluster)/$(Process).log
@@ -87,4 +88,6 @@ max_retries             = 3
 
 environment             = "WANDB_MODE=offline HF_HOME=./hf_cache HF_DATASETS_CACHE=./hf_cache/datasets TRANSFORMERS_CACHE=./hf_cache/transformers TORCH_EXTENSIONS_DIR=./hf_cache/torch_extensions XDG_CACHE_HOME=./hf_cache HF_TOKEN=$ENV(HF_TOKEN) HUGGINGFACE_HUB_TOKEN=$ENV(HUGGINGFACE_HUB_TOKEN) TRANSFORMERS_VERBOSITY=error JOB_SUFFIX=$(Cluster)_$(Process)"
 
-queue 1
+queue MODEL_NAME_OR_PATH from (
+    meta-llama/Llama-3.2-1B
+)

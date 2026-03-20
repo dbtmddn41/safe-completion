@@ -15,11 +15,14 @@ ls -F
 nvidia-smi || echo "nvidia-smi not available"
 
 # ─── Arguments ────────────────────────────────────────────────────────────────
-MODEL_NAME_OR_PATH="${1:-TinyLlama/TinyLlama-1.1B-Chat-v1.0}"
-OUTPUT_DIR="${2:-output/sft}"
+MODEL_NAME_OR_PATH="${1:-meta-llama/Llama-3.2-1B}"
+OUTPUT_DIR="${2:-output/sft-llama32}"
 ZERO_STAGE="${3:-3}"
 OFFLOAD="${4:-none}"
 JOB_SUFFIX="${5:-}"
+SFT_TRAIN_PROPORTION="${6:-${SFT_TRAIN_PROPORTION:-1.0}}"
+SFT_SAFE_TRAIN_PROPORTION="${7:-${SFT_SAFE_TRAIN_PROPORTION:-${SFT_TRAIN_PROPORTION}}}"
+SFT_EPOCHS="${8:-${SFT_EPOCHS:-3}}"
 
 # ─── PATH setup (must come before pip install so deepspeed CLI is found) ─────
 export PATH="${HOME}/.local/bin:${PATH}"
@@ -35,9 +38,9 @@ else
         --index-url https://download.pytorch.org/whl/cu124 \
         'torch==2.6.0+cu124' \
         'torchvision==0.21.0+cu124'
-    # Keep transformers in 4.x for safe_rlhf model compatibility.
+    # Install latest transformers as requested.
     pip install --no-warn-script-location \
-        'transformers>=5.0.0' \
+        'transformers' \
         'deepspeed>=0.12' \
         'accelerate>=0.25' \
         'datasets' \
@@ -74,7 +77,23 @@ fi
 
 # ─── Environment variables ───────────────────────────────────────────────────
 export LOGLEVEL="${LOGLEVEL:-WARNING}"
-export WANDB_MODE="${WANDB_MODE:-offline}"
+if [[ -z "${WANDB_MODE:-}" || "${WANDB_MODE}" == "UNDEFINED" ]]; then
+    export WANDB_MODE="online"
+fi
+if [[ -z "${WANDB_PROJECT:-}" || "${WANDB_PROJECT}" == "UNDEFINED" ]]; then
+    export WANDB_PROJECT="Safe-RLHF-SFT"
+fi
+if [[ "${WANDB_API_KEY:-}" == "UNDEFINED" ]]; then
+    unset WANDB_API_KEY
+fi
+if [[ "${WANDB_ENTITY:-}" == "UNDEFINED" ]]; then
+    unset WANDB_ENTITY
+fi
+
+if [[ "${WANDB_MODE}" != "offline" && -z "${WANDB_API_KEY:-}" ]]; then
+    echo "WANDB_API_KEY is not set; falling back to WANDB_MODE=offline."
+    export WANDB_MODE="offline"
+fi
 
 export USER="${USER:-condor}"
 export LOGNAME="${LOGNAME:-${USER}}"
@@ -135,21 +154,26 @@ echo "Model : ${MODEL_NAME_OR_PATH}"
 echo "Output: ${OUTPUT_DIR}"
 echo "ZeRO  : ${ZERO_STAGE}"
 echo "Offload: ${OFFLOAD}"
+echo "WandB mode: ${WANDB_MODE}"
+echo "Epochs: ${SFT_EPOCHS}, Alpaca proportion: ${SFT_TRAIN_PROPORTION}, PKU-SafeRLHF-QA-Safe proportion: ${SFT_SAFE_TRAIN_PROPORTION}"
 
 # ─── Run training ────────────────────────────────────────────────────────────
 MASTER_PORT=$((RANDOM % 50000 + 10000))
 
+TRAIN_DATASET_SPEC_ALPACA="alpaca:${SFT_TRAIN_PROPORTION}"
+TRAIN_DATASET_SPEC_SAFE="PKU-SafeRLHF-QA-Safe/train:${SFT_SAFE_TRAIN_PROPORTION}"
+
 deepspeed --master_port "${MASTER_PORT}" \
     "${PROJECT_ROOT}/_launch_sft.py" \
-    --train_datasets alpaca \
+    --train_datasets "${TRAIN_DATASET_SPEC_ALPACA}" "${TRAIN_DATASET_SPEC_SAFE}" \
     --model_name_or_path "${MODEL_NAME_OR_PATH}" \
     --max_length 512 \
     --trust_remote_code True \
-    --epochs 1 \
-    --max_steps 30 \
-    --per_device_train_batch_size 8 \
-    --per_device_eval_batch_size 8 \
-    --gradient_accumulation_steps 1 \
+    --epochs "${SFT_EPOCHS}" \
+    --per_device_train_batch_size 4 \
+    --per_device_eval_batch_size 4 \
+    --gradient_accumulation_steps 8 \
+    --gradient_checkpointing \
     --learning_rate 2e-5 \
     --lr_scheduler_type cosine \
     --lr_warmup_ratio 0.03 \
@@ -157,7 +181,7 @@ deepspeed --master_port "${MASTER_PORT}" \
     --seed 42 \
     --output_dir "${OUTPUT_DIR}" \
     --log_type wandb \
-    --log_project Safe-RLHF-SFT \
+    --log_project "${WANDB_PROJECT}" \
     --zero_stage "${ZERO_STAGE}" \
     --offload "${OFFLOAD}" \
     --bf16 True \
@@ -196,10 +220,97 @@ if [[ -n "${JOB_SUFFIX}" ]]; then
     archive_name="sft_output_${JOB_SUFFIX}.tar.gz"
 fi
 
+is_inference_model_dir() {
+    local model_dir="$1"
+    [[ -f "${model_dir}/config.json" ]] || return 1
+
+    if compgen -G "${model_dir}/model.safetensors" > /dev/null; then
+        return 0
+    fi
+    if compgen -G "${model_dir}/model-*.safetensors" > /dev/null; then
+        return 0
+    fi
+    if compgen -G "${model_dir}/pytorch_model.bin" > /dev/null; then
+        return 0
+    fi
+    if compgen -G "${model_dir}/pytorch_model-*.bin" > /dev/null; then
+        return 0
+    fi
+    if compgen -G "${model_dir}/adapter_model.safetensors" > /dev/null; then
+        return 0
+    fi
+
+    return 1
+}
+
+copy_if_exists() {
+    local src_dir="$1"
+    local dst_dir="$2"
+    local pattern="$3"
+    local copied=1
+
+    shopt -s nullglob
+    for item in "${src_dir}"/${pattern}; do
+        [[ -e "${item}" ]] || continue
+        cp -a "${item}" "${dst_dir}/"
+        copied=0
+    done
+    shopt -u nullglob
+
+    return ${copied}
+}
+
 if [[ -d "${OUTPUT_DIR}" && "$(ls -A "${OUTPUT_DIR}")" ]]; then
-    echo "Packing output..."
-    tar -czf "${archive_name}" "${OUTPUT_DIR}"
-    echo "Output packed to ${archive_name}"
+    source_dir="${OUTPUT_DIR}"
+
+    if ! is_inference_model_dir "${source_dir}"; then
+        latest_checkpoint="$(find "${OUTPUT_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' | sort -V | tail -n 1 || true)"
+        if [[ -n "${latest_checkpoint}" ]] && is_inference_model_dir "${latest_checkpoint}"; then
+            source_dir="${latest_checkpoint}"
+        fi
+    fi
+
+    export_dir="./sft_inference_export"
+    rm -rf "${export_dir}"
+    mkdir -p "${export_dir}"
+
+    echo "Collecting inference artifacts from: ${source_dir}"
+    copied_any=0
+
+    for pattern in \
+        'config.json' \
+        'generation_config.json' \
+        'model.safetensors' \
+        'model-*.safetensors' \
+        'model.safetensors.index.json' \
+        'pytorch_model.bin' \
+        'pytorch_model-*.bin' \
+        'pytorch_model.bin.index.json' \
+        'adapter_config.json' \
+        'adapter_model.safetensors' \
+        'tokenizer.json' \
+        'tokenizer_config.json' \
+        'tokenizer.model' \
+        'special_tokens_map.json' \
+        'added_tokens.json' \
+        'vocab.json' \
+        'merges.txt' \
+        'chat_template.jinja' \
+        'preprocessor_config.json'; do
+        if copy_if_exists "${source_dir}" "${export_dir}" "${pattern}"; then
+            copied_any=1
+        fi
+    done
+
+    if [[ ${copied_any} -eq 1 ]]; then
+        tar -czf "${archive_name}" -C "${export_dir}" .
+        echo "Inference-only output packed to ${archive_name}"
+    else
+        echo "WARNING: Could not find inference artifacts. Creating empty marker."
+        tar -czf "${archive_name}" --files-from /dev/null
+    fi
+
+    rm -rf "${export_dir}"
 else
     echo "WARNING: No output produced. Creating empty marker."
     tar -czf "${archive_name}" --files-from /dev/null

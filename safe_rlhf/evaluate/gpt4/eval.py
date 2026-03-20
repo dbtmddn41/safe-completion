@@ -93,16 +93,29 @@ def generate_answer(problems: list[str], model_name_or_path: str) -> list[str]:
     answers = []
     print(f'Generating answers with {model_name_or_path}')
     for problem in tqdm(problems):
-        prompt = PROMPT_INPUT.format(input=problem['prompt'])
-        input_ids = to_device(
+        if getattr(tokenizer, 'chat_template', None):
+            try:
+                prompt = tokenizer.apply_chat_template(
+                    [{'role': 'user', 'content': problem['prompt']}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:  # noqa: BLE001
+                prompt = PROMPT_INPUT.format(input=problem['prompt'])
+        else:
+            prompt = PROMPT_INPUT.format(input=problem['prompt'])
+
+        inputs = to_device(
             tokenizer(prompt, return_tensors='pt'),
             device=('cuda' if torch.cuda.is_available() else None),
         )
         output_ids = model.generate(
-            **input_ids,
-            max_length=2048,
+            **inputs,
+            max_new_tokens=512,
+            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
         )
-        answer = tokenizer.decode(output_ids[0], skip_special_tokens=True)[len(prompt) :]
+        generated_ids = output_ids[0, inputs['input_ids'].shape[-1] :]
+        answer = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
         answers.append(answer)
     return answers
 

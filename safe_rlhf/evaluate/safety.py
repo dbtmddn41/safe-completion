@@ -32,6 +32,7 @@ import json
 import os
 import re
 import time
+from itertools import islice
 from typing import Any
 
 import torch
@@ -78,10 +79,35 @@ REFUSAL_PATTERNS: list[str] = [
 
 _REFUSAL_RE = re.compile("|".join(REFUSAL_PATTERNS), re.IGNORECASE)
 
+FALLBACK_PROMPT_INPUT: str = "BEGINNING OF CONVERSATION: USER: {input} ASSISTANT:"
+
 
 def is_refusal(text: str) -> bool:
     """Heuristic check whether *text* looks like a refusal."""
     return bool(_REFUSAL_RE.search(text[:300]))
+
+
+def build_generation_prompt(tokenizer: AutoTokenizer, prompt: str) -> str:
+    """Build a generation prompt that prefers chat format when available."""
+    if getattr(tokenizer, "chat_template", None):
+        try:
+            return tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Keep compatibility with models trained on the repository prompt format.
+    return FALLBACK_PROMPT_INPUT.format(input=prompt)
+
+
+def build_alpaca_prompt(instruction: str, input_text: str = '') -> str:
+    """Build an Alpaca-style instruction prompt."""
+    if input_text.strip():
+        return f"{instruction}\n\nInput:\n{input_text}"
+    return instruction
 
 
 # ── loaders ───────────────────────────────────────────────────────────────────
@@ -263,20 +289,7 @@ def generate_responses(
 
     for i in tqdm(range(0, len(prompts), batch_size), desc="Generating responses"):
         batch_prompts = prompts[i : i + batch_size]
-        formatted: list[str] = []
-        for p in batch_prompts:
-            if getattr(tokenizer, "chat_template", None):
-                try:
-                    text = tokenizer.apply_chat_template(
-                        [{"role": "user", "content": p}],
-                        tokenize=False,
-                        add_generation_prompt=True,
-                    )
-                    formatted.append(text)
-                    continue
-                except Exception:  # noqa: BLE001
-                    pass
-            formatted.append(p)
+        formatted = [build_generation_prompt(tokenizer, p) for p in batch_prompts]
 
         inputs = tokenizer(
             formatted,
@@ -354,6 +367,196 @@ def compute_perplexity(
         perplexities.append(ppl)
 
     return perplexities
+
+
+def evaluate_alpaca_rouge(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    *,
+    dataset_path: str = 'tatsu-lab/alpaca',
+    split: str = 'train',
+    num_samples: int = 100,
+    max_new_tokens: int = 256,
+    batch_size: int = 1,
+    temperature: float = 0.0,
+) -> dict[str, Any]:
+    """Evaluate target model on Alpaca with Hugging Face ROUGE wrapper."""
+    from datasets import load_dataset  # noqa: PLC0415
+    import evaluate  # noqa: PLC0415
+
+    ds = load_dataset(dataset_path, split=split)
+    if num_samples > 0:
+        records = list(islice(ds, num_samples))
+    else:
+        records = list(ds)
+
+    prompts: list[str] = []
+    references: list[str] = []
+    for item in records:
+        instruction = str(item.get('instruction', '')).strip()
+        input_text = str(item.get('input', '')).strip()
+        reference = str(item.get('output', '')).strip()
+        if not instruction or not reference:
+            continue
+        prompts.append(build_alpaca_prompt(instruction, input_text))
+        references.append(reference)
+
+    responses = generate_responses(
+        model,
+        tokenizer,
+        prompts,
+        max_new_tokens=max_new_tokens,
+        batch_size=batch_size,
+        temperature=temperature,
+    )
+
+    rouge = evaluate.load('rouge')
+    scores = rouge.compute(
+        predictions=responses,
+        references=references,
+        use_stemmer=True,
+    )
+
+    return {
+        'dataset': dataset_path,
+        'split': split,
+        'num_samples': len(prompts),
+        'rouge1': round(float(scores.get('rouge1', 0.0)), 4),
+        'rouge2': round(float(scores.get('rouge2', 0.0)), 4),
+        'rougeL': round(float(scores.get('rougeL', 0.0)), 4),
+        'rougeLsum': round(float(scores.get('rougeLsum', 0.0)), 4),
+    }
+
+
+def eval_mmlu(
+    model: AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    *,
+    dataset_path: str = 'cais/mmlu',
+    dataset_config: str = 'all',
+    split: str = 'test',
+    num_samples: int = 100,
+    max_new_tokens: int = 128,
+    batch_size: int = 1,
+    temperature: float = 0.0,
+) -> dict[str, Any]:
+    """Evaluate target model on MMLU multiple-choice accuracy."""
+    from datasets import load_dataset  # noqa: PLC0415
+
+    def _normalize_pred(pred_text: str) -> str | None:
+        # Prefer the explicit "Final answer: X" pattern.
+        m = re.search(r'Final answer\s*:\s*([ABCD])', pred_text, re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+
+        pred_text = pred_text.strip()
+
+        if pred_text in ['A', 'B', 'C', 'D']:
+            return pred_text
+
+        for letter in ['A', 'B', 'C', 'D']:
+            if f'{letter})' in pred_text or f'{letter}.' in pred_text:
+                return letter
+
+        for ch in pred_text:
+            if ch in 'ABCD':
+                return ch
+
+        return None
+
+    ds = None
+    split_candidates = [split, 'validation', 'dev', 'test', 'train']
+    errors: list[str] = []
+    for split_name in split_candidates:
+        try:
+            if dataset_config:
+                ds = load_dataset(dataset_path, dataset_config, split=split_name)
+            else:
+                ds = load_dataset(dataset_path, split=split_name)
+            split = split_name
+            break
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f'{split_name}: {exc}')
+
+    if ds is None:
+        raise RuntimeError(
+            'Failed to load MMLU dataset. Tried splits '
+            f"{split_candidates} for dataset='{dataset_path}', config='{dataset_config}'. "
+            f'Errors: {errors[:2]}',
+        )
+
+    if num_samples > 0:
+        records = list(islice(ds, num_samples))
+    else:
+        records = list(ds)
+
+    prompts: list[str] = []
+    answers: list[str] = []
+    option_letters = 'ABCD'
+
+    for i, dp in enumerate(records):
+        question = str(dp.get('question', '')).strip()
+        choices = dp.get('choices', [])
+        answer = dp.get('answer')
+
+        if not question or not isinstance(choices, list) or len(choices) < 4:
+            continue
+
+        opts = '\n'.join(
+            f'{letter}. {text}'
+            for letter, text in zip(option_letters, choices)
+        )
+
+        problem = (
+            f'{question}\n\n{opts}\n\n'
+            'Reason step by step if needed.\n'
+            'On the last line, write exactly:\n'
+            '[Final answer: <one letter from A, B, C, or D>]\n'
+            'Do not include anything after this line.'
+        )
+
+        gold: str | None = None
+        if isinstance(answer, int) and 0 <= answer < 4:
+            gold = option_letters[answer]
+        elif isinstance(answer, str):
+            ans = answer.strip().upper()
+            if ans in option_letters:
+                gold = ans
+            elif ans.isdigit() and 0 <= int(ans) < 4:
+                gold = option_letters[int(ans)]
+
+        if gold is None:
+            continue
+
+        prompts.append(problem)
+        answers.append(gold)
+
+    responses = generate_responses(
+        model,
+        tokenizer,
+        prompts,
+        max_new_tokens=max_new_tokens,
+        batch_size=batch_size,
+        temperature=temperature,
+    )
+
+    correct = 0
+    total = len(responses)
+    for i in range(total):
+        pred = _normalize_pred(responses[i])
+        if pred == answers[i]:
+            correct += 1
+
+    accuracy = round(correct / total, 4) if total else 0.0
+    return {
+        'dataset': dataset_path,
+        'config': dataset_config,
+        'split': split,
+        'num_samples': total,
+        'accuracy': accuracy,
+        'correct': correct,
+        'total': total,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -594,6 +797,57 @@ def parse_arguments() -> argparse.Namespace:
         help="Number of examples in the qualitative Markdown report.",
     )
 
+    # ── Additional benchmark metrics ─────────────────────────────────────────
+    add_g = parser.add_argument_group("additional metrics")
+    add_g.add_argument(
+        '--extra_eval_samples',
+        type=int,
+        default=100,
+        help='Samples for Alpaca-ROUGE and MMLU evaluations (0 = all).',
+    )
+    add_g.add_argument(
+        '--alpaca_dataset',
+        type=str,
+        default='tatsu-lab/alpaca',
+        help='Dataset path for Alpaca ROUGE evaluation.',
+    )
+    add_g.add_argument(
+        '--alpaca_split',
+        type=str,
+        default='train',
+        help='Dataset split for Alpaca ROUGE evaluation.',
+    )
+    add_g.add_argument(
+        '--mmlu_dataset',
+        type=str,
+        default='cais/mmlu',
+        help='Dataset path for MMLU evaluation.',
+    )
+    add_g.add_argument(
+        '--mmlu_config',
+        type=str,
+        default='all',
+        help='Dataset config for MMLU (set empty string to skip config).',
+    )
+    add_g.add_argument(
+        '--mmlu_split',
+        type=str,
+        default='test',
+        help='Preferred dataset split for MMLU evaluation.',
+    )
+    add_g.add_argument(
+        '--disable_alpaca_rouge',
+        action='store_true',
+        default=False,
+        help='Disable Alpaca ROUGE evaluation.',
+    )
+    add_g.add_argument(
+        '--disable_mmlu',
+        action='store_true',
+        default=False,
+        help='Disable MMLU evaluation.',
+    )
+
     # ── Hardware / misc ───────────────────────────────────────────────────────
     hw_g = parser.add_argument_group("hardware")
     hw_g.add_argument(
@@ -688,6 +942,57 @@ def main() -> None:  # noqa: C901, PLR0915 – intentionally linear
     ppl_time = time.time() - t0
     print(f"Perplexity computed in {ppl_time:.1f}s")
 
+    # ── Step 3.5: Additional metrics (Alpaca ROUGE + MMLU) ─────────────────
+    extra_metrics: dict[str, Any] = {}
+    extra_timing_sec: dict[str, float] = {}
+
+    if not args.disable_alpaca_rouge:
+        print(f"\n{'=' * 60}")
+        print('Evaluating Alpaca ROUGE (Hugging Face evaluate)...')
+        print(f"{'=' * 60}")
+        t0 = time.time()
+        alpaca_scores = evaluate_alpaca_rouge(
+            model,
+            tokenizer,
+            dataset_path=args.alpaca_dataset,
+            split=args.alpaca_split,
+            num_samples=args.extra_eval_samples,
+            max_new_tokens=args.max_new_tokens,
+            batch_size=args.batch_size,
+            temperature=args.temperature,
+        )
+        extra_metrics['alpaca_rouge'] = alpaca_scores
+        extra_timing_sec['alpaca_rouge'] = round(time.time() - t0, 1)
+        print(
+            'Alpaca ROUGE: '
+            f"R1={alpaca_scores['rouge1']:.4f}, "
+            f"R2={alpaca_scores['rouge2']:.4f}, "
+            f"RL={alpaca_scores['rougeL']:.4f}",
+        )
+
+    if not args.disable_mmlu:
+        print(f"\n{'=' * 60}")
+        print('Evaluating MMLU accuracy...')
+        print(f"{'=' * 60}")
+        t0 = time.time()
+        mmlu_scores = eval_mmlu(
+            model,
+            tokenizer,
+            dataset_path=args.mmlu_dataset,
+            dataset_config=args.mmlu_config,
+            split=args.mmlu_split,
+            num_samples=args.extra_eval_samples,
+            max_new_tokens=args.max_new_tokens,
+            batch_size=args.batch_size,
+            temperature=args.temperature,
+        )
+        extra_metrics['mmlu'] = mmlu_scores
+        extra_timing_sec['mmlu'] = round(time.time() - t0, 1)
+        print(
+            f"MMLU accuracy: {mmlu_scores['accuracy']:.4f} "
+            f"({mmlu_scores['correct']}/{mmlu_scores['total']})",
+        )
+
     # Free GPU memory before loading Llama-Guard.
     del model
     torch.cuda.empty_cache()
@@ -757,11 +1062,14 @@ def main() -> None:  # noqa: C901, PLR0915 – intentionally linear
             "temperature": args.temperature,
             "dtype": args.dtype,
             "seed": args.seed,
+            "extra_eval_samples": args.extra_eval_samples,
         },
+        "additional_metrics": extra_metrics,
         "timing_sec": {
             "generation": round(gen_time, 1),
             "perplexity": round(ppl_time, 1),
             "safety_classification": round(safety_time, 1),
+            **extra_timing_sec,
         },
     }
 
@@ -813,6 +1121,19 @@ def main() -> None:  # noqa: C901, PLR0915 – intentionally linear
     print(f"  Refusal rate     : {num_refusals / len(prompts) * 100:.1f}%  ({num_refusals}/{len(prompts)} refusals)")
     print(f"  Mean perplexity  : {mean_ppl:.2f}")
     print(f"  Median perplexity: {median_ppl:.2f}")
+    if 'alpaca_rouge' in extra_metrics:
+        alpaca = extra_metrics['alpaca_rouge']
+        print(
+            '  Alpaca ROUGE     : '
+            f"R1={alpaca['rouge1']:.4f}, R2={alpaca['rouge2']:.4f}, "
+            f"RL={alpaca['rougeL']:.4f}",
+        )
+    if 'mmlu' in extra_metrics:
+        mmlu = extra_metrics['mmlu']
+        print(
+            f"  MMLU accuracy    : {mmlu['accuracy']:.4f} "
+            f"({mmlu['correct']}/{mmlu['total']})",
+        )
     print(f"{'=' * 60}")
 
 

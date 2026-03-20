@@ -30,6 +30,12 @@ from safe_rlhf.datasets.raw.safe_rlhf import (
     SafeRLHFTestDataset,
     SafeRLHFTrainDataset,
 )
+from safe_rlhf.datasets.raw.safe_rlhf_qa import (
+    SafeRLHFQADataset,
+    SafeRLHFQASafeTrainDataset,
+    SafeRLHFQATestDataset,
+    SafeRLHFQATrainDataset,
+)
 
 
 __all__ = [
@@ -46,4 +52,8 @@ __all__ = [
     'SafeRLHF30KTrainDataset',
     'SafeRLHF30KTestDataset',
     'SafeRLHF10KTrainDataset',
+    'SafeRLHFQADataset',
+    'SafeRLHFQATrainDataset',
+    'SafeRLHFQATestDataset',
+    'SafeRLHFQASafeTrainDataset',
 ]

@@ -38,6 +38,7 @@ dependencies = [
     "torch >= 1.13",
     "transformers >= 4.37",
     "datasets",
+    "evaluate",
     "tokenizers >= 0.13.3",
     "accelerate",
     "deepspeed",

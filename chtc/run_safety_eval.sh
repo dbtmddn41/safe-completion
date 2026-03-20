@@ -64,6 +64,7 @@ else
         'deepspeed>=0.12' \
         'accelerate>=0.25' \
         'datasets' \
+        'evaluate' \
         'tokenizers' \
         numpy scipy sentencepiece tqdm rich
 fi

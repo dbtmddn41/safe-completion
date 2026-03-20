@@ -67,6 +67,8 @@ DEFAULT_EVAL_USER_TEMPLATE = (
     "Provide your evaluation."
 )
 
+FALLBACK_PROMPT_INPUT = 'BEGINNING OF CONVERSATION: USER: {input} ASSISTANT:'
+
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -200,7 +202,10 @@ def build_prompt(
             pass
 
     # Fallback: simple concatenation
-    return f"{system_prompt}\n\n{user_content}\n\n"
+    merged_content = user_content.strip()
+    if system_prompt.strip():
+        merged_content = f"[System]\n{system_prompt.strip()}\n\n{merged_content}"
+    return FALLBACK_PROMPT_INPUT.format(input=merged_content)
 
 
 def resolve_dtype(dtype_str: str) -> torch.dtype | str:
